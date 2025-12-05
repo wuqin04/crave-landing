@@ -1,14 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, addDoc, serverTimestamp } from 'firebase/firestore';
+// Added 'getCountFromServer' to imports
+import { getFirestore, collection, addDoc, serverTimestamp, getCountFromServer } from 'firebase/firestore';
 import { getAuth, signInAnonymously } from 'firebase/auth';
-import { Utensils, ArrowRight, Check, Loader2, Star, MapPin, Heart, Settings, Flame, AlertTriangle } from 'lucide-react';
+import { Utensils, ArrowRight, Check, Loader2, Star, MapPin, Heart, Settings, Flame, AlertTriangle, Users } from 'lucide-react';
 
-// --- FIREBASE SETUP ---
-// ⚠️ CRITICAL STEP: You must replace these placeholder values with your ACTUAL keys.
-// 1. Go to console.firebase.google.com
-// 2. Create/Select a project -> Project Settings -> General -> Your Apps -> SDK Setup/Config
-// 3. Copy the object and paste it below.
+// --- FIREBASE CONFIG ---
+// PASTE YOUR KEYS HERE AGAIN IF YOU COPY-PASTE THIS FILE
 const firebaseConfig = {
   apiKey: "AIzaSyAVQx-T3C_DwjZeKwmc1Kr1-i0qhH-TR5w",
   authDomain: "crave-swipe.firebaseapp.com",
@@ -19,10 +17,8 @@ const firebaseConfig = {
   measurementId: "G-6ZLRTPXWFE"
 };
 
-// Initialize Firebase safely
 let app, auth, db;
 try {
-  // Only initialize if we have a somewhat valid config to prevent immediate crashes
   if (firebaseConfig.apiKey && firebaseConfig.apiKey !== "AIzaSyD...") {
       app = initializeApp(firebaseConfig);
       auth = getAuth(app);
@@ -32,35 +28,11 @@ try {
   console.warn("Firebase initialization error:", e);
 }
 
-// --- MOCK DATA FOR THE ANIMATED PHONE DEMO ---
+// ... (MOCK DATA & PriceLevel component remain the same) ...
 const DEMO_CARDS = [
-  { 
-    id: 1, 
-    name: "Burger & Barrel", 
-    image: "https://images.unsplash.com/photo-1568901346375-23c9450c58cd?auto=format&fit=crop&w=800&q=80", 
-    cuisine: "American", 
-    price: 2,
-    rating: 4.5,
-    address: "42 Industrial Pkwy"
-  },
-  { 
-    id: 2, 
-    name: "Sushi Zen", 
-    image: "https://images.unsplash.com/photo-1579871494447-9811cf80d66c?auto=format&fit=crop&w=800&q=80", 
-    cuisine: "Japanese", 
-    price: 3,
-    rating: 4.8,
-    address: "88 Koi Garden Ln"
-  },
-  { 
-    id: 3, 
-    name: "Mamak Maju", 
-    image: "https://images.unsplash.com/photo-1631452180519-c014fe946bc7?auto=format&fit=crop&w=800&q=80", 
-    cuisine: "Mamak", 
-    price: 1,
-    rating: 4.2,
-    address: "15 Jalan SS2"
-  },
+  { id: 1, name: "Burger & Barrel", image: "https://images.unsplash.com/photo-1568901346375-23c9450c58cd?auto=format&fit=crop&w=800&q=80", cuisine: "American", price: 2, rating: 4.5, address: "42 Industrial Pkwy" },
+  { id: 2, name: "Sushi Zen", image: "https://images.unsplash.com/photo-1579871494447-9811cf80d66c?auto=format&fit=crop&w=800&q=80", cuisine: "Japanese", price: 3, rating: 4.8, address: "88 Koi Garden Ln" },
+  { id: 3, name: "Mamak Maju", image: "https://images.unsplash.com/photo-1631452180519-c014fe946bc7?auto=format&fit=crop&w=800&q=80", cuisine: "Mamak", price: 1, rating: 4.2, address: "15 Jalan SS2" },
 ];
 
 const PriceLevel = ({ level }) => (
@@ -76,19 +48,28 @@ export default function LandingPage() {
   const [status, setStatus] = useState('idle');
   const [activeCard, setActiveCard] = useState(0);
   const [isMisconfigured, setIsMisconfigured] = useState(false);
+  
+  // NEW: State for the Waitlist Count
+  const [waitlistCount, setWaitlistCount] = useState(0);
 
-  // 1. Auth & Configuration Check
+  // 1. Auth & Data Fetching
   useEffect(() => {
-    // Check if user is still using the placeholder key
     if (firebaseConfig.apiKey === "AIzaSyD...") {
         setIsMisconfigured(true);
         return;
     }
 
     if(auth) {
-        signInAnonymously(auth).catch((err) => {
+        signInAnonymously(auth).then(() => {
+            // FETCH THE COUNT ON LOAD
+            if (db) {
+                const coll = collection(db, "waitlist");
+                getCountFromServer(coll).then(snapshot => {
+                    setWaitlistCount(snapshot.data().count);
+                }).catch(err => console.log("Count error:", err));
+            }
+        }).catch((err) => {
             console.error("Auth failed:", err);
-            // If auth fails with 'api-key-not-valid', it means the key is wrong
             if (err.code === 'auth/api-key-not-valid') setIsMisconfigured(true);
         });
     }
@@ -107,9 +88,8 @@ export default function LandingPage() {
     e.preventDefault();
     if (!email || !email.includes('@')) return;
     
-    // Prevent submission if config is missing
     if (isMisconfigured || !db) {
-        alert("Cannot submit: Firebase is not configured yet. Please check the code.");
+        alert("Cannot submit: Firebase is not configured yet.");
         return;
     }
 
@@ -117,10 +97,7 @@ export default function LandingPage() {
 
     try {
       const user = auth?.currentUser;
-      if (!user) {
-          // Try one more time to sign in if not already
-          await signInAnonymously(auth);
-      }
+      if (!user) await signInAnonymously(auth);
 
       await addDoc(collection(db, 'waitlist'), {
         email: email,
@@ -130,6 +107,8 @@ export default function LandingPage() {
 
       setStatus('success');
       setEmail('');
+      // Update count locally immediately so user sees +1
+      setWaitlistCount(prev => prev + 1);
     } catch (err) {
       console.error(err);
       setStatus('error');
@@ -139,21 +118,13 @@ export default function LandingPage() {
   return (
     <div className="min-h-screen bg-[#fff0f3] font-sans text-slate-800 selection:bg-rose-200 overflow-x-hidden flex flex-col">
       
-      {/* --- CONFIGURATION WARNING BANNER --- */}
+      {/* Warning Banner */}
       {isMisconfigured && (
         <div className="bg-red-600 text-white px-6 py-4 shadow-xl z-50 fixed top-0 left-0 right-0 flex items-start gap-4">
             <AlertTriangle className="w-6 h-6 shrink-0 mt-0.5" />
             <div>
                 <h3 className="font-bold text-lg">Firebase Setup Required</h3>
-                <p className="text-red-100 text-sm mt-1">
-                    The app is crashing because you are using the placeholder API Key ("AIzaSyD...").
-                </p>
-                <ol className="list-decimal ml-5 mt-2 text-sm space-y-1">
-                    <li>Go to your <strong>crave-landing/src/App.jsx</strong> file.</li>
-                    <li>Find the <code>const firebaseConfig</code> object at the top.</li>
-                    <li>Replace the placeholder values with your real keys from the Firebase Console.</li>
-                    <li>Restart the server.</li>
-                </ol>
+                <p className="text-red-100 text-sm mt-1">Replace the API Key in <code>src/App.jsx</code> with your real key.</p>
             </div>
         </div>
       )}
@@ -227,21 +198,27 @@ export default function LandingPage() {
               )}
             </div>
             
-            <p className="text-xs text-slate-400 mt-4">
-              Join 400+ foodies. No spam, strictly early access.
-            </p>
+            {/* DYNAMIC COUNTER */}
+            <div className="flex items-center justify-center lg:justify-start gap-2 mt-6 text-slate-400 text-sm">
+               <div className="flex -space-x-2">
+                  {[1,2,3].map(i => (
+                    <div key={i} className="w-6 h-6 rounded-full bg-slate-200 border-2 border-white"></div>
+                  ))}
+               </div>
+               <p>
+                 Join <span className="font-bold text-slate-800">{waitlistCount > 0 ? waitlistCount : '...'}</span> foodies waiting.
+               </p>
+            </div>
+
           </div>
 
           {/* Right: Phone Demo */}
           <div className="relative flex-1 flex justify-center items-center w-full max-w-[320px] lg:max-w-none">
-            
             {/* Phone Frame */}
             <div className="relative w-[300px] h-[600px] bg-white rounded-[3rem] border-8 border-slate-900 shadow-2xl shadow-rose-300/50 overflow-hidden z-10 flex flex-col">
-              
               {/* Notch */}
               <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-6 bg-slate-900 rounded-b-xl z-20"></div>
-
-              {/* App Header (Matches Real App) */}
+              {/* App Header */}
               <div className="px-6 pt-12 pb-4 flex justify-between items-center bg-white/90 backdrop-blur-sm z-20 border-b border-slate-100">
                  <div className="flex items-center gap-2">
                     <div className="bg-rose-500 p-1.5 rounded-lg shadow-lg shadow-rose-200">
@@ -251,52 +228,25 @@ export default function LandingPage() {
                  </div>
                  <div className="p-2 bg-slate-100 rounded-full"><Settings className="w-3 h-3 text-slate-600" /></div>
               </div>
-
               {/* Cards Container */}
               <div className="relative flex-1 w-full px-4 flex items-center justify-center bg-slate-50">
                 {DEMO_CARDS.map((card, index) => {
                   let style = {};
                   const isActive = index === activeCard;
                   const isNext = index === (activeCard + 1) % DEMO_CARDS.length;
-
                   if (isActive) {
-                    style = { 
-                      transform: 'translateX(200%) rotate(20deg)', 
-                      opacity: 0, 
-                      transition: 'all 0.8s ease-in' 
-                    };
+                    style = { transform: 'translateX(200%) rotate(20deg)', opacity: 0, transition: 'all 0.8s ease-in' };
                   } else if (isNext) {
-                    style = { 
-                      transform: 'scale(1) translateY(0)', 
-                      opacity: 1, 
-                      zIndex: 10,
-                      transition: 'all 0.5s ease-out 0.2s' 
-                    };
+                    style = { transform: 'scale(1) translateY(0)', opacity: 1, zIndex: 10, transition: 'all 0.5s ease-out 0.2s' };
                   } else {
-                    style = { 
-                      transform: 'scale(0.9) translateY(20px)', 
-                      opacity: 0, 
-                      zIndex: 0 
-                    };
+                    style = { transform: 'scale(0.9) translateY(20px)', opacity: 0, zIndex: 0 };
                   }
-
                   return (
-                    <div
-                      key={card.id}
-                      className="absolute w-[88%] h-[400px] bg-white rounded-3xl shadow-xl border border-slate-100 overflow-hidden flex flex-col"
-                      style={style}
-                    >
-                      {/* Image (55%) */}
+                    <div key={card.id} className="absolute w-[88%] h-[400px] bg-white rounded-3xl shadow-xl border border-slate-100 overflow-hidden flex flex-col" style={style}>
                       <div className="h-[55%] relative">
-                        <img 
-                          src={card.image} 
-                          className="w-full h-full object-cover" 
-                          onError={(e) => { e.target.src = "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=800&q=80"; }}
-                        />
+                        <img src={card.image} className="w-full h-full object-cover" onError={(e) => { e.target.src = "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=800&q=80"; }} />
                         <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-black/60 to-transparent"></div>
                       </div>
-                      
-                      {/* Content (45%) */}
                       <div className="h-[45%] p-5 flex flex-col justify-between bg-white">
                          <div>
                             <div className="flex justify-between items-start mb-1">
@@ -320,30 +270,18 @@ export default function LandingPage() {
                             </div>
                          </div>
                       </div>
-                      
-                      {/* Fake Stamp */}
                       {isActive && (
-                        <div className="absolute top-8 left-8 border-4 border-emerald-500 text-emerald-500 rounded-lg px-2 py-1 text-2xl font-extrabold -rotate-12 animate-in fade-in zoom-in duration-300 bg-white/20 backdrop-blur-sm z-30">
-                          YUM
-                        </div>
+                        <div className="absolute top-8 left-8 border-4 border-emerald-500 text-emerald-500 rounded-lg px-2 py-1 text-2xl font-extrabold -rotate-12 animate-in fade-in zoom-in duration-300 bg-white/20 backdrop-blur-sm z-30">YUM</div>
                       )}
                     </div>
                   );
                 })}
               </div>
-
-              {/* Bottom Nav Bar (Matches Real App) */}
+              {/* Bottom Nav Bar */}
               <div className="bg-white border-t border-slate-100 p-3 flex justify-around items-center z-30 pb-6">
-                 <div className="flex flex-col items-center gap-1 text-rose-500">
-                    <Flame className="w-5 h-5 fill-rose-500" />
-                    <span className="text-[9px] font-bold">Discover</span>
-                 </div>
-                 <div className="flex flex-col items-center gap-1 text-slate-300">
-                    <Heart className="w-5 h-5" />
-                    <span className="text-[9px] font-bold">Matches</span>
-                 </div>
+                 <div className="flex flex-col items-center gap-1 text-rose-500"><Flame className="w-5 h-5 fill-rose-500" /><span className="text-[9px] font-bold">Discover</span></div>
+                 <div className="flex flex-col items-center gap-1 text-slate-300"><Heart className="w-5 h-5" /><span className="text-[9px] font-bold">Matches</span></div>
               </div>
-
             </div>
           </div>
         </div>
